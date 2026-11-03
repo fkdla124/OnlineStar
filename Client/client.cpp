@@ -364,6 +364,7 @@ int main()
 										starAlreadyExist = true;
 										(*it)->row = ptr->row;
 										(*it)->col = ptr->col;
+
 										break;
 									}
 								}
@@ -387,7 +388,10 @@ int main()
 
 								// 만약 내 별을 지워라? 연결을 끊을 것도 아니고 뜬금없이 지우라는 건 이상하다. 무시한다.
 								if (ptr->id == myStar->id)
+								{
+									offset += sizeof(MsgDeleteStar);
 									break;
+								}
 
 								// 별 찾아서 지우기
 								for (List<Star*>::Iterator it = starList.begin(); it != starList.end(); ++it)
@@ -408,7 +412,11 @@ int main()
 
 								// 내 이동정보는 버림.
 								if (ptr->id == myStar->id)
+								{
+									offset += sizeof(MsgMoveStar);
 									break;
+								}
+
 
 								// 이동보정 해야할까 고민이다. 서버쪽에서 주는 좌표정보가 이상할까?
 								// 하지만 원장님 서버가 어떻게 만들어졌는지 모르고
