@@ -1,7 +1,7 @@
 # ⭐ OnlineStar
 * socket API, tcp, Msg Protocol 에 대해 학습하기 위하여 진행하는 미니프로젝트. <br>
 * 콘솔에서 멀티플레이로 별을 움직일 수 있음. <br>
-* 직접만든 리스트 자료구조 사용. <br>
+* 직접만든 리스트 자료구조 사용. -> [LinkedList](https://github.com/fkdla124/LinkedList) <br>
 
 ![화면사진](./screen.png)
 
