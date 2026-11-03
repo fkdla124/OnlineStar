@@ -135,6 +135,8 @@ int main()
 {
 	timeBeginPeriod(1);
 
+	SetConsoleTitle(L"OnlineStar");
+
 	printf("접속할 서버 IP : ");
 	wscanf_s(L"%s", serverIp, (unsigned int)(sizeof(serverIp) / sizeof(WCHAR)));
 
@@ -404,6 +406,10 @@ int main()
 							{
 								MsgMoveStar* ptr = (MsgMoveStar*)msg;
 
+								// 내 이동정보는 버림.
+								if (ptr->id == myStar->id)
+									break;
+
 								// 이동보정 해야할까 고민이다. 서버쪽에서 주는 좌표정보가 이상할까?
 								// 하지만 원장님 서버가 어떻게 만들어졌는지 모르고
 								// 다른사람 서버도 어떻게 만들지 모르니 일단 해본다.
@@ -515,15 +521,15 @@ int main()
 
 			// 프레임 제어
 			clock_t elapsedFrameTick = clock() - startFrameTick;
-			startFrameTick += 40;
+			startFrameTick += 20;
 
-			// 렌더스킵
-			//if (elapsedFrameTick >= 80)
-			//	renderSkip = true;
-			//else
-			//	renderSkip = false;
+			// 렌더스킵 (까먹지 않기 위해 만들었음)
+			if (elapsedFrameTick >= 40)
+				renderSkip = true;
+			else
+				renderSkip = false;
 
-			clock_t remainFrameTick = 40 - elapsedFrameTick;
+			clock_t remainFrameTick = 20 - elapsedFrameTick;
 			if (remainFrameTick > 0)
 			{
 				Sleep(remainFrameTick);
