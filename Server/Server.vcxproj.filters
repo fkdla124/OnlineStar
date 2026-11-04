@@ -20,7 +20,19 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="List.h">
+    <ClInclude Include="Console.h">
+      <Filter>소스 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="MessageProtocol.h">
+      <Filter>소스 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="Network.h">
+      <Filter>소스 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="SocketErrorcode.h">
+      <Filter>소스 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="GameData.h">
       <Filter>소스 파일</Filter>
     </ClInclude>
   </ItemGroup>

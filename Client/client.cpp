@@ -8,6 +8,14 @@
 #include "List.h"
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Client는 함수없이 main()에 코드를 다 때려박았다. 
+// 아직 내 수준이 모자르기 때문에 함수화가 부담스러웠다.
+// 서버에서 함수화를 시도해본다.
+//
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Message Protocol //
 
 #pragma pack(push, 1)
@@ -100,8 +108,19 @@ char recvBuf[RECV_BUFSIZE];
 int returnValueWSAStartup = NOT_YET;
 int errorCodeWSAStartUp = NOT_YET;
 
-// socket() -> 성공(소켓fd), 실패(SOCKET_ERROR), 실패시 WSAGetLastError() 사용
+// socket() -> 성공(소켓fd), 실패(INVALID_SOCKET), 실패시 WSAGetLastError() 사용
 int errorCodeSocket = NOT_YET;
+
+// bind() -> 성공(0), 실패(SOCKET_ERROR), 실패시 WSAGetLastError() 사용
+int returnValueBind = NOT_YET;
+int errorCodeBind = NOT_YET;
+
+// listen() -> 성공(0), 실패(SOCKET_ERROR), 실패시 WSAGetLastError() 사용
+int returnValueListen = NOT_YET;
+int errorCodeListen = NOT_YET;
+
+// accept() -> 성공(소켓fd), 실패(INVALID_SOCKET), 실패시 WSAGetLastError() 사용
+int errorCodeAccept = NOT_YET;
 
 // InetPton() -> 성공(1), 잘못된IP문자열형식(0), 실패(-1), 실패시 WSAGetLastError() 사용
 int returnValueInetPton = NOT_YET;
@@ -115,6 +134,10 @@ int errorCodeConnect = NOT_YET;
 // ioctlsocket() -> 성공(0), 실패(SOCKET_ERROR), 실패시 WSAGetLastError() 사용
 int returnValueIoctlSocket = NOT_YET;
 int errorCodeIoctlSocket = NOT_YET;
+
+// setsockopt() -> 성공(0), 실패(SOCKET_ERROR), 실패시 WSAGetLastError() 사용
+int returnValueSetSockOpt = NOT_YET;
+int errorCodeSetSockOpt = NOT_YET;
 
 // select() -> 성공(소켓개수), 실패(SOCKET_ERROR), 실패시 WSAGetLastError() 사용
 int returnValueSelect = NOT_YET;
@@ -135,7 +158,7 @@ int main()
 {
 	timeBeginPeriod(1);
 
-	SetConsoleTitle(L"OnlineStar");
+	SetConsoleTitle(L"OnlineStar Client");
 
 	printf("접속할 서버 IP : ");
 	wscanf_s(L"%s", serverIp, (unsigned int)(sizeof(serverIp) / sizeof(WCHAR)));
@@ -160,7 +183,7 @@ int main()
 	}
 
 	// SOCKADDR
-	SOCKADDR_IN serverAddr;
+	SOCKADDR_IN serverAddr = { 0, };
 	serverAddr.sin_family = AF_INET;
 	serverAddr.sin_port = htons(SERVER_PORT);
 	returnValueInetPton = InetPton(AF_INET, serverIp, &serverAddr.sin_addr);
@@ -198,6 +221,16 @@ int main()
 		Sleep(INFINITE);
 	}
 
+	// socket LINGER = {1, 0} -> RST로 종료하게끔.
+	linger _linger = { 1, 0 };
+	returnValueSetSockOpt = setsockopt(sock, SOL_SOCKET, SO_LINGER, (char*)&_linger, sizeof(_linger));
+	if (returnValueSetSockOpt == SOCKET_ERROR)
+	{
+		errorCodeSetSockOpt = WSAGetLastError();
+		printf("setsockopt() LINGER{0, 0} setting error. %d\n", errorCodeSetSockOpt);
+		Sleep(INFINITE);
+	}
+
 	// 내 별 만들기
 	myStar = new Star;
 	memset(myStar, 0, sizeof(Star));
@@ -221,6 +254,12 @@ int main()
 	// 메시지 카운팅
 	int sendMsgCountThisFrame = 0;
 	int recvMsgCountThisFrame = 0;
+
+	int msgCountAllocId = 0;
+	int msgCountCreateStar = 0;
+	int msgCountDeleteStar = 0;
+	int msgCountMoveStarSend = 0;
+	int msgCountMoveStarRecv = 0;
 
 	while (1)
 	{
@@ -330,6 +369,8 @@ int main()
 						{
 							case MsgType::ALLOCID:
 							{
+								msgCountAllocId++;
+
 								MsgAllocID* ptr = (MsgAllocID*)msg;
 								myStar->id = ptr->id;
 
@@ -338,6 +379,8 @@ int main()
 							}
 							case MsgType::CREATESTAR:
 							{
+								msgCountCreateStar++;
+
 								bool starAlreadyExist = false;
 
 								MsgCreateStar* ptr = (MsgCreateStar*)msg;
@@ -357,7 +400,7 @@ int main()
 
 								for (List<Star*>::Iterator it = starList.begin(); it != starList.end(); ++it)
 								{
-									// 이미 존재하는 별에대한 건 위치만 바꾸기.
+									// 이미 존재하는 별에대한 위치만 바꾸기.
 									// 내 별이 이미 존재함.
 									if ((*it)->id == ptr->id)
 									{
@@ -384,6 +427,8 @@ int main()
 							}
 							case MsgType::DELETESTAR:
 							{
+								msgCountDeleteStar++;
+
 								MsgDeleteStar* ptr = (MsgDeleteStar*)msg;
 
 								// 만약 내 별을 지워라? 연결을 끊을 것도 아니고 뜬금없이 지우라는 건 이상하다. 무시한다.
@@ -408,6 +453,8 @@ int main()
 							}
 							case MsgType::MOVESTAR:
 							{
+								msgCountMoveStarRecv++;
+
 								MsgMoveStar* ptr = (MsgMoveStar*)msg;
 
 								// 내 이동정보는 버림.
@@ -447,7 +494,7 @@ int main()
 						}
 					}
 				}
-				if (FD_ISSET(sock, &wset))
+				if (FD_ISSET(sock, &wset)) // wset은 안 써도 된다 지금은. 근데 걍 써봄
 				{
 					if (sendMoveMsgThisFrame)
 					{
@@ -482,6 +529,7 @@ int main()
 							}
 						}
 
+						msgCountMoveStarSend++;
 						sendMsgCountThisFrame++;
 						
 						// 보내고 나서 초기화. 이번 프레임에 보내지 못한 것은 고려하지 않음.
@@ -505,6 +553,7 @@ int main()
 
 				MoveCursor(0, 0);
 				printf("Connect Client: %d / FPS: %d / Send: %d / Recv: %d\n",(int)(starList.size()), printfps, sendMsgCountThisFrame, recvMsgCountThisFrame);
+				printf("AllocId: %d, CreateStar: %d, DeleteStar: %d, MoveStar(Send): %d, MoveStar(Recv): %d\n", msgCountAllocId, msgCountCreateStar, msgCountDeleteStar, msgCountMoveStarSend, msgCountMoveStarRecv);
 				for (int i = 0; i < SCREEN_ROW; i++)
 				{
 					screen[i][SCREEN_COL] = '\0';

@@ -1,0 +1,30 @@
+﻿#pragma once
+
+#include <list>
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Network Data //
+
+#define SERVER_PORT 3000
+
+// 수신버퍼 
+// [한 프레임에 16바이트 메시지 * 10개 수용가능]
+#define RECV_BUFSIZE 160
+
+struct Session
+{
+	bool del;	// 지연 삭제 마킹.
+
+	int id;
+	int row;
+	int col;
+
+	SOCKET sock;
+	WCHAR ip[16];	// IPv4
+	USHORT port;
+
+	char recvBuf[RECV_BUFSIZE];
+};
+
+std::list<Session*> sessionList; // STL list 사용해보기.
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
