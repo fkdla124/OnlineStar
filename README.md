@@ -1,7 +1,8 @@
 # ⭐ OnlineStar
 * socket API, tcp, Msg Protocol 에 대해 학습하기 위하여 진행하는 미니프로젝트. <br>
 * 콘솔에서 멀티플레이로 별을 움직일 수 있음. <br>
-* 직접만든 리스트 자료구조 사용. -> [LinkedList](https://github.com/fkdla124/LinkedList) <br>
+* 직접만든 리스트 자료구조 사용(클라) -> [LinkedList](https://github.com/fkdla124/LinkedList) <br>
+* STL list도 사용(서버)
 
 ![화면사진](./screen.png)
 
@@ -10,6 +11,7 @@
 # 🖥️ Server
 * 클라이언트 접속시 별 ID와 위치 정보를 전송해줌. 다른 별들의 정보도 전송해줌. <br>
 * 클라이언트 접속 -> 별 아이디 지정 -> 모든 별 위치정보 전송 <br>
+* 클라이언트들의 이동패킷 처리
 
 <br>
 <br>
