@@ -35,7 +35,7 @@
 <br>
 
 # 🔍 디버깅 및 학습을 위한 소켓 에러코드 수집
-* 이번 과제에서 10054, 10060, 10061 수집하였음.
+* 이번 과제에서 10038, 10054, 10060, 10061 수집하였음.
 * 에러코드 관련 수집 및 기록 리포지토리 링크 -> [📖 에러코드 기록](https://github.com/fkdla124/Socket_ErrorCode_Logging)
 ```cpp
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -48,8 +48,19 @@
 int returnValueWSAStartup = NOT_YET;
 int errorCodeWSAStartUp = NOT_YET;
 
-// socket() -> 성공(소켓fd), 실패(SOCKET_ERROR), 실패시 WSAGetLastError() 사용
+// socket() -> 성공(소켓fd), 실패(INVALID_SOCKET), 실패시 WSAGetLastError() 사용
 int errorCodeSocket = NOT_YET;
+
+// bind() -> 성공(0), 실패(SOCKET_ERROR), 실패시 WSAGetLastError() 사용
+int returnValueBind = NOT_YET;
+int errorCodeBind = NOT_YET;
+
+// listen() -> 성공(0), 실패(SOCKET_ERROR), 실패시 WSAGetLastError() 사용
+int returnValueListen = NOT_YET;
+int errorCodeListen = NOT_YET;
+
+// accept() -> 성공(소켓fd), 실패(INVALID_SOCKET), 실패시 WSAGetLastError() 사용
+int errorCodeAccept = NOT_YET;
 
 // InetPton() -> 성공(1), 잘못된IP문자열형식(0), 실패(-1), 실패시 WSAGetLastError() 사용
 int returnValueInetPton = NOT_YET;
@@ -63,6 +74,10 @@ int errorCodeConnect = NOT_YET;
 // ioctlsocket() -> 성공(0), 실패(SOCKET_ERROR), 실패시 WSAGetLastError() 사용
 int returnValueIoctlSocket = NOT_YET;
 int errorCodeIoctlSocket = NOT_YET;
+
+// setsockopt() -> 성공(0), 실패(SOCKET_ERROR), 실패시 WSAGetLastError() 사용
+int returnValueSetSockOpt = NOT_YET;
+int errorCodeSetSockOpt = NOT_YET;
 
 // select() -> 성공(소켓개수), 실패(SOCKET_ERROR), 실패시 WSAGetLastError() 사용
 int returnValueSelect = NOT_YET;
