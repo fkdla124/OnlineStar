@@ -1,3 +1,6 @@
+# 💥💥**과제중 발생한 문제 기록**💥💥 -> [문제해결](https://github.com/fkdla124/OnlineStar/tree/master/%EB%AC%B8%EC%A0%9C%ED%95%B4%EA%B2%B0)
+
+
 # ⭐ OnlineStar
 * socket API, tcp, Msg Protocol 에 대해 학습하기 위하여 진행하는 미니프로젝트. <br>
 * 콘솔에서 멀티플레이로 별을 움직일 수 있음. <br>
