@@ -92,7 +92,7 @@ WCHAR serverIp[16];
 
 // 수신버퍼 
 // [한 프레임에 16바이트 메시지 * 10개 수용가능]
-#define RECV_BUFSIZE 160
+#define RECV_BUFSIZE 1600
 char recvBuf[RECV_BUFSIZE];
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -160,8 +160,8 @@ int main()
 
 	SetConsoleTitle(L"OnlineStar Client");
 
-	printf("접속할 서버 IP : ");
-	wscanf_s(L"%s", serverIp, (unsigned int)(sizeof(serverIp) / sizeof(WCHAR)));
+	//printf("접속할 서버 IP : ");
+	//wscanf_s(L"%s", serverIp, (unsigned int)(sizeof(serverIp) / sizeof(WCHAR)));
 
 	// WSAStartup()
 	WSADATA wsa;
@@ -186,7 +186,7 @@ int main()
 	SOCKADDR_IN serverAddr = { 0, };
 	serverAddr.sin_family = AF_INET;
 	serverAddr.sin_port = htons(SERVER_PORT);
-	returnValueInetPton = InetPton(AF_INET, serverIp, &serverAddr.sin_addr);
+	returnValueInetPton = InetPton(AF_INET, L"127.0.0.1", &serverAddr.sin_addr);
 	if (returnValueInetPton != 1)
 	{
 		if (returnValueInetPton == 0)
@@ -552,8 +552,8 @@ int main()
 				}
 
 				MoveCursor(0, 0);
-				printf("Connect Client: %d / FPS: %d / Send: %d / Recv: %d\n",(int)(starList.size()), printfps, sendMsgCountThisFrame, recvMsgCountThisFrame);
-				printf("AllocId: %d, CreateStar: %d, DeleteStar: %d, MoveStar(Send): %d, MoveStar(Recv): %d\n", msgCountAllocId, msgCountCreateStar, msgCountDeleteStar, msgCountMoveStarSend, msgCountMoveStarRecv);
+				printf("Connect Client: %d / FPS: %d / Send: %3d / Recv: %3d\n",(int)(starList.size()), printfps, sendMsgCountThisFrame, recvMsgCountThisFrame);
+				printf("AllocId(Recv): %d, CreateStar(Recv): %d, DeleteStar(Recv): %d, MoveStar(Send): %d, MoveStar(Recv): %d\n", msgCountAllocId, msgCountCreateStar, msgCountDeleteStar, msgCountMoveStarSend, msgCountMoveStarRecv);
 				for (int i = 0; i < SCREEN_ROW; i++)
 				{
 					screen[i][SCREEN_COL] = '\0';

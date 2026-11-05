@@ -5,9 +5,8 @@
 #pragma comment(lib, "winmm.lib")
 
 // todo
-// session 지연삭제 마킹은 했는데 삭제하는 코드를 작성하지 않았음.
-// 클라이언트 종료시 서버에서도 session삭제 코드를 작성하지 않았음.
-// 맨처음 소켓 만들고 listen 하는 부분, 이동메시지 처리 부분, sendUniCast() 함수를 만들지 않았음. -> 만들면 코드가 굉장히 깔끔할 것으로 예상
+// 서버 연속 두개키면 10048 bind error() 나옴. 이거 기록하셈 깃허브에
+
 
 // 이번엔 헤더로 나눠보기.
 #include "Console.h"
@@ -23,7 +22,293 @@ void Network(SOCKET listenSocket);
 void Render();
 void FPS();
 
+SOCKET StartServer(linger _linger, ULONG nonBlocking);
+void StopServer(SOCKET listenSocket);
+
+void SendUniCast(Session* session, char* msg, int msglen);
+void SendBroadCast(Session* excludedSession, char* msg, int msglen);
+
+void SweepMarkedSession();
+
 int main()
+{
+	// Start Server
+	linger _linger = { 1, 0 };
+	ULONG nonBlocking = 1;
+	SOCKET listenSocket = StartServer(_linger, nonBlocking);
+
+	// Console Init()
+	Init();
+	SetConsoleTitle(L"OnlineStar Server");
+
+	// Timer Init()
+	startFpsTick = clock();
+	startFrameTick = clock();
+
+	// Main Loop
+	while (1)
+	{
+		// Network()
+		Network(listenSocket);
+
+		// Render() -> 서버의 상태를 확인하기 위한 표시. (FPS, 초당 메시지처리량 등..) 지금은 맵도 렌더링 함. 보기위해
+		Render();
+
+		// FPS
+		FPS();
+	}
+
+	StopServer(listenSocket);
+
+	return 0;
+}
+
+void Init()
+{
+	// WinAPI 콘솔 핸들 얻어서 초기화
+	InitConsole();
+}
+
+void Network(SOCKET listenSocket)
+{
+	recvMsgCountThisFrame = 0;
+	sendMsgCountThisFrame = 0;
+
+	fd_set rset;
+	FD_ZERO(&rset);
+
+	FD_SET(listenSocket, &rset);
+	for (auto it = sessionList.begin(); it != sessionList.end(); ++it)
+		FD_SET((*it)->sock, &rset);
+
+	timeval tv = { 0, 0 }; // 지금은 로직이 따로 없어서 NULL이 맞지만. 렌더링을 하고싶기때문에 {0, 0} 으로 간다.
+	returnValueSelect = select(0, &rset, NULL, NULL, &tv);
+	if (returnValueSelect == SOCKET_ERROR)
+	{
+		errorCodeSelect = WSAGetLastError();
+		printf("select() error. %d\n", errorCodeSelect);
+		Sleep(INFINITE);
+	}
+
+	// accept() 처리 -> 이번 프로젝트에서는 1프레임에 한 번만 하기로 결정.
+	if (FD_ISSET(listenSocket, &rset))
+		AcceptClient(listenSocket);
+
+	for (auto it = sessionList.begin(); it != sessionList.end(); ++it)
+	{
+		if (FD_ISSET((*it)->sock, &rset))
+		{
+			returnValueRecv = recv((*it)->sock, (*it)->recvBuf, RECV_BUFSIZE, 0);
+			if (returnValueRecv == SOCKET_ERROR)
+			{
+				errorCodeRecv = WSAGetLastError();
+
+				if (errorCodeRecv == WSAEWOULDBLOCK)
+				{
+					continue;
+					// 지금은 뭘 할 수 있는 게 없어보인다.
+				}
+				else if (errorCodeRecv == WSAECONNRESET) // 클라 RST
+				{
+					(*it)->del = true;
+					continue;
+				}
+			}
+			else if (returnValueRecv == 0)
+			{
+				// 클라도 서버도 링거때문에 RST를 쏘게 만들었는데 이 경우가 있을까 모르겠다. 
+				// 아마도 shutdown()? 이건 링거 {1, 0} 걸어도 FIN이 오는 걸로 기억한다.
+				(*it)->del = true;
+				continue;
+			}
+
+			int offset = 0;
+			while (offset < returnValueRecv)
+			{
+				int* msg = (int*)((*it)->recvBuf + offset);
+				switch ((MsgType)*msg)
+				{
+					case MsgType::MOVESTAR:
+					{
+						recvMsgCountThisFrame++;
+						msgCountMoveStarRecv++;
+
+						MsgMoveStar* ptr = (MsgMoveStar*)msg;
+
+						// 본인 이동이 아니면 무시
+						if (ptr->id != (*it)->id)
+						{
+							offset += sizeof(MsgMoveStar);
+							break;
+						}
+
+						// 이상한 좌표 요청은 이동 무시
+						if (ptr->row < 0 || ptr->row >= SCREEN_ROW || ptr->col < 0 || ptr->col >= SCREEN_COL)
+						{
+							offset += sizeof(MsgMoveStar);
+							break;
+						}
+
+						// 이동
+						(*it)->row = ptr->row;
+						(*it)->col = ptr->col;
+
+						// 내 이동을 브로드캐스트
+						MsgMoveStar msgMoveStar;
+						msgMoveStar.type = (int)MsgType::MOVESTAR;
+						msgMoveStar.id = (*it)->id;
+						msgMoveStar.row = (*it)->row;
+						msgMoveStar.col = (*it)->col;
+
+						SendBroadCast(*it, (char*)&msgMoveStar, sizeof(msgMoveStar));
+						sendMsgCountThisFrame += sessionList.size() - 1;
+						msgCountMoveStarSend += sessionList.size() - 1;
+
+						offset += sizeof(MsgMoveStar);
+						break;
+					}
+					default:
+						// 이상한 타입의 메시지가 왔을 때의 처리가 필요함.
+						// 만약 우리 클라와 서버가 사용하는 메시지 프로토콜로 이동메시지외에 메시지가 왔다면 이는 클라 조작이다.
+						// 그런 경우에는 그 세션을 추적해서 행동들을 로깅해야한다. 아예 GM이 감시하는 것도 방법이다.
+						(*it)->del = true;
+						break;
+				}
+			}
+		}
+	}
+
+	// 삭제마킹된애들 실제 삭제
+	SweepMarkedSession();
+}
+
+void AcceptClient(SOCKET listenSocket)
+{
+	SOCKADDR_IN acceptClientAddr = { 0, };
+	int acceptClientAddrLen = sizeof(acceptClientAddr);
+
+	SOCKET acceptClientSocket = accept(listenSocket, (sockaddr*)&acceptClientAddr, &acceptClientAddrLen);
+	if (acceptClientSocket == INVALID_SOCKET)
+	{
+		errorCodeAccept = WSAGetLastError();
+		if (errorCodeAccept == WSAEWOULDBLOCK)
+		{
+			// 수락할 연결이 없을때. 또는 무언가 지금 당장은 할 수 없을 때.
+			// 지금은 딱히 할 게 없어보인다.
+		}
+		else
+		{
+			printf("accept() error. %d\n", errorCodeAccept);
+			Sleep(INFINITE);
+		}
+	}
+
+	if (sessionList.size() >= MAXSESSION)
+	{
+		closesocket(acceptClientSocket);
+		return;
+	}
+
+	// 세션정보 만들기
+	Session* acceptClientSession = new Session;
+	acceptClientSession->del = false;
+	acceptClientSession->id = starId++;
+	acceptClientSession->row = SCREEN_ROW / 2;
+	acceptClientSession->col = SCREEN_COL / 2;
+	acceptClientSession->sock = acceptClientSocket;
+	InetNtop(AF_INET, &acceptClientAddr.sin_addr, acceptClientSession->ip, sizeof(acceptClientSession->ip) / sizeof(WCHAR));
+	acceptClientSession->port = ntohs(acceptClientAddr.sin_port);
+
+	sessionList.push_back(acceptClientSession);
+
+	// 지금 접속한 클라에게 MsgAllocID 전송
+	MsgAllocID msgAllocId;
+	msgAllocId.type = (int)MsgType::ALLOCID;
+	msgAllocId.id = acceptClientSession->id;
+
+	SendUniCast(acceptClientSession, (char*)&msgAllocId, sizeof(msgAllocId));
+	sendMsgCountThisFrame++;
+	msgCountAllocId++;
+
+	// 지금 접속한 클라에게 자신을 포함한 모든 별 정보 주기
+	for (auto it = sessionList.begin(); it != sessionList.end(); ++it)
+	{
+		MsgCreateStar msgCreateStar;
+		msgCreateStar.type = (int)MsgType::CREATESTAR;
+		msgCreateStar.row = (*it)->row;
+		msgCreateStar.col = (*it)->col;
+		msgCreateStar.id = (*it)->id;
+
+		SendUniCast(acceptClientSession, (char*)&msgCreateStar, sizeof(msgCreateStar));
+		sendMsgCountThisFrame++;
+		msgCountCreateStar++;
+	}
+
+	// 다른 클라들에게 지금 접속한 클라 별 정보 주기
+	MsgCreateStar msgCreateStar;
+	msgCreateStar.type = (int)MsgType::CREATESTAR;
+	msgCreateStar.row = acceptClientSession->row;
+	msgCreateStar.col = acceptClientSession->col;
+	msgCreateStar.id = acceptClientSession->id;
+
+	SendBroadCast(acceptClientSession, (char*)&msgCreateStar, sizeof(msgCreateStar));
+	sendMsgCountThisFrame += sessionList.size() - 1;
+	msgCountCreateStar += sessionList.size() - 1;
+}
+
+void Render()
+{
+	if (renderSkip == false)
+	{
+		memset(screen, 32, sizeof(screen));
+		for (auto it = sessionList.begin(); it != sessionList.end(); ++it)
+		{
+			screen[(*it)->row][(*it)->col] = '*';
+		}
+
+		MoveCursor(0, 0);
+		printf("Connect Client: %d / FPS: %d / Send: %3d / Recv: %3d\n", (int)(sessionList.size()), printfps, sendMsgCountThisFrame, recvMsgCountThisFrame);
+		printf("AllocId(Send): %d, CreateStar(Send): %d, DeleteStar(Send): %d, MoveStar(Send): %d, MoveStar(Recv): %d\n", msgCountAllocId, msgCountCreateStar, msgCountDeleteStar, msgCountMoveStarSend, msgCountMoveStarRecv);
+		for (int i = 0; i < SCREEN_ROW; i++)
+		{
+			screen[i][SCREEN_COL] = '\0';
+			printf("%s\n", screen[i]);
+		}
+	}
+}
+
+void FPS()
+{
+	// 프레임 카운트
+	fps++;
+
+	// FPS 저장
+	clock_t elapsedFpsTick = clock() - startFpsTick;
+	if (elapsedFpsTick >= 1000)
+	{
+		printfps = fps;
+		fps = 0;
+		startFpsTick += 1000;
+	}
+
+	// 프레임 제어
+	clock_t elapsedFrameTick = clock() - startFrameTick;
+	startFrameTick += 5;
+
+	// 렌더스킵 (까먹지 않기 위해 만들었음)
+	if (elapsedFrameTick >= 10)
+		renderSkip = true;
+	else
+		renderSkip = false;
+
+	clock_t remainFrameTick = 5 - elapsedFrameTick;
+	if (remainFrameTick > 0)
+	{
+		Sleep(remainFrameTick);
+	}
+}
+
+SOCKET StartServer(linger _linger, ULONG nonBlocking)
 {
 	// WSAStartup()
 	WSADATA wsa;
@@ -44,8 +329,7 @@ int main()
 		Sleep(INFINITE);
 	}
 
-	// socket LINGER {1, 0} -> RST로 종료하게끔.
-	linger _linger = { 1, 0 };
+	// linger set
 	returnValueSetSockOpt = setsockopt(listenSocket, SOL_SOCKET, SO_LINGER, (char*)&_linger, sizeof(_linger));
 	if (returnValueSetSockOpt == SOCKET_ERROR)
 	{
@@ -79,8 +363,7 @@ int main()
 	}
 
 	// nonblocking change
-	ULONG on = 1;
-	returnValueIoctlSocket = ioctlsocket(listenSocket, FIONBIO, &on);
+	returnValueIoctlSocket = ioctlsocket(listenSocket, FIONBIO, &nonBlocking);
 	if (returnValueIoctlSocket == SOCKET_ERROR)
 	{
 		errorCodeIoctlSocket = WSAGetLastError();
@@ -88,31 +371,11 @@ int main()
 		Sleep(INFINITE);
 	}
 
-	// console Init()
-	Init();
+	return listenSocket;
+}
 
-	SetConsoleTitle(L"OnlineStar Server");
-
-	// timer
-	clock_t startFpsTick = clock();
-	clock_t startFrameTick = clock();
-
-	// main loop
-	while (1)
-	{
-		// Logic
-		// 로직이 없다.
-
-		// Network()
-		Network(listenSocket);
-
-		// Render() -> 서버의 상태를 확인하기 위한 표시. (FPS, 초당 메시지처리량 등..) 지금은 맵도 렌더링 함. 보기위해
-		Render();
-
-		// FPS
-		FPS();
-	}
-
+void StopServer(SOCKET listenSocket)
+{
 	for (auto it = sessionList.begin(); it != sessionList.end(); ++it)
 	{
 		closesocket((*it)->sock);
@@ -120,275 +383,69 @@ int main()
 	closesocket(listenSocket);
 	WSACleanup();
 
-	return 0;
+	sessionList.clear();
 }
 
-void Init()
+void SendBroadCast(Session* excludedSession, char* msg, int msglen)
 {
-	// WinAPI 콘솔 핸들 얻어서 초기화
-	InitConsole();
-}
-
-void Network(SOCKET listenSocket)
-{
-	fd_set rset;
-	FD_ZERO(&rset);
-
-	// listenSocket 넣기
-	FD_SET(listenSocket, &rset);
-
-	// session에 있는 socket 다 넣기
 	for (auto it = sessionList.begin(); it != sessionList.end(); ++it)
 	{
-		FD_SET((*it)->sock, &rset);
-	}
-
-	timeval tv = { 0, 0 }; // 지금은 로직이 따로 없어서 NULL이 맞지만. 렌더링을 하고싶기때문에 {0, 0} 으로 간다.
-	returnValueSelect = select(0, &rset, NULL, NULL, &tv);
-	if (returnValueSelect == SOCKET_ERROR)
-	{
-		errorCodeSelect = WSAGetLastError();
-		printf("select() error. %d\n", errorCodeSelect);
-		Sleep(INFINITE);
-	}
-
-	// accept() 처리 -> 이번 프로젝트에서는 1프레임에 한 번만 하기로 결정.
-	if (FD_ISSET(listenSocket, &rset))
-	{
-		AcceptClient(listenSocket);
-	}
-
-	for (auto it = sessionList.begin(); it != sessionList.end(); ++it)
-	{
-		if (FD_ISSET((*it)->sock, &rset))
+		if ((*it)->id != excludedSession->id)
 		{
-			returnValueRecv = recv((*it)->sock, (*it)->recvBuf, RECV_BUFSIZE, 0);
-
-			int offset = 0;
-			while (offset < returnValueRecv)
-			{
-				int* msg = (int*)((*it)->recvBuf + offset);
-				switch ((MsgType)*msg)
-				{
-					case MsgType::MOVESTAR:
-						MsgMoveStar* ptr = (MsgMoveStar*)msg;
-
-						// 이상한 좌표 요청은 이동 무시
-						if (ptr->row < 0 || ptr->row >= SCREEN_ROW || ptr->col < 0 || ptr->col >= SCREEN_COL)
-						{
-							offset += sizeof(MsgMoveStar);
-							break;
-						}
-
-						// 이동
-						(*it)->row = ptr->row;
-						(*it)->col = ptr->col;
-
-						offset += sizeof(MsgMoveStar);
-						break;
-				}
-			}
+			SendUniCast(*it, msg, msglen);
 		}
 	}
 }
 
-void AcceptClient(SOCKET listenSocket)
+void SendUniCast(Session* session, char* msg, int msglen)
 {
-	SOCKADDR_IN acceptClientAddr = { 0, };
-	int acceptClientAddrLen = sizeof(acceptClientAddr);
-
-	SOCKET acceptClientSocket = accept(listenSocket, (sockaddr*)&acceptClientAddr, &acceptClientAddrLen);
-	if (acceptClientSocket == INVALID_SOCKET)
-	{
-		errorCodeAccept = WSAGetLastError();
-		if (errorCodeAccept == WSAEWOULDBLOCK)
-		{
-			// 수락할 연결이 없을때. 또는 무언가 지금 당장은 할 수 없을 때.
-			// 지금은 딱히 할 게 없어보인다.
-		}
-		else
-		{
-			printf("accept() error. %d\n", errorCodeAccept);
-			Sleep(INFINITE);
-		}
-	}
-
-	// 세션정보 만들기
-	Session* acceptClientSession = new Session;
-	acceptClientSession->del = false;
-	acceptClientSession->id = starId++;
-	acceptClientSession->row = SCREEN_ROW / 2;
-	acceptClientSession->col = SCREEN_COL / 2;
-	acceptClientSession->sock = acceptClientSocket;
-	InetNtop(AF_INET, &acceptClientAddr.sin_addr, acceptClientSession->ip, sizeof(acceptClientSession->ip) / sizeof(WCHAR));
-	acceptClientSession->port = ntohs(acceptClientAddr.sin_port);
-
-	sessionList.push_back(acceptClientSession);
-
-	// 지금 접속한 클라에게 MsgAllocID 전송
-	MsgAllocID msgAllocId;
-	msgAllocId.type = (int)MsgType::ALLOCID;
-	msgAllocId.id = acceptClientSession->id;
-	returnValueSend = send(acceptClientSocket, (char*)&msgAllocId, sizeof(msgAllocId), 0);
+	returnValueSend = send(session->sock, msg, msglen, 0);
 	if (returnValueSend == SOCKET_ERROR)
 	{
-		// 중요한 접속 과정중에 send() 오류가 났다. 이는 오류 타입을 구분하지 않고 연결을 끊어야한다. 링버퍼가 있다면 다음 프레임에 보낼 수 있다.
-		// 파일로 로그남기고 연결 끊기.
 		errorCodeSend = WSAGetLastError();
 
+		// 실패시 파일로 로그 남기기
 		tm t;
 		time_t tt = time(NULL);
 		localtime_s(&t, &tt);
 		char fileName[256];
 		sprintf_s(fileName, "[SocketErrorLog]%04d%02d%02d_%02d%02d%02d.txt", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
 
-		#pragma warning(disable:6387)
+		#pragma warning(disable:6387) // fp가 NULL일 수 있다.
 		FILE* fp;
-		fopen_s(&fp, fileName, "w");
-		fwprintf(fp, L"send() error. errorcode=%d, FILE:%s, LINE:%d, acceptClientAddr:%s:%hu, \n", errorCodeSend, __FILEW__, __LINE__, acceptClientSession->ip, acceptClientSession->port);
-		fwprintf(fp, L"MsgData -> type = MsgAllocID(%d)\n", msgAllocId.type);
-		fwprintf(fp, L"MsgData -> id = %d\n", msgAllocId.id);
+		fopen_s(&fp, fileName, "wb");
+
+		// UTF-16 LE BOM
+		unsigned char bom[] = { 0xFF, 0xFE };
+		fwrite(bom, 1, 2, fp);
+
+		fwprintf(fp, L"send() error. errorcode: %d, FILE: %s, LINE: %d, recvSessionID: %d \n", errorCodeSend, __FILEW__, __LINE__, session->id);
+		fwprintf(fp, L"MsgType = %d\n", *((int*)msg));
 		fclose(fp);
 		#pragma warning(default:6387)
 
 		// 지연삭제 마킹 및 연결끊기. SO_LINGER {0, 0} RST 전송
-		acceptClientSession->del = true;
-		closesocket(acceptClientSocket);
-		return;
-	}
-
-	// 지금 접속한 클라에게 자신을 포함한 모든 별 정보 주기
-	for (auto it = sessionList.begin(); it != sessionList.end(); ++it)
-	{
-		MsgCreateStar msgCreateStar;
-		msgCreateStar.type = (int)MsgType::CREATESTAR;
-		msgCreateStar.row = (*it)->row;
-		msgCreateStar.col = (*it)->col;
-		msgCreateStar.id = (*it)->id;
-
-		returnValueSend = send(acceptClientSocket, (char*)&msgCreateStar, sizeof(msgCreateStar), 0);
-		if (returnValueSend == SOCKET_ERROR)
-		{
-			// 중요한 접속 과정중에 send() 오류가 났다. 이는 오류 타입을 구분하지 않고 연결을 끊어야한다. 링버퍼가 있다면 다음 프레임에 보낼 수 있다.
-			// 파일로 로그남기고 연결 끊기.
-			errorCodeSend = WSAGetLastError();
-
-			tm t;
-			time_t tt = time(NULL);
-			localtime_s(&t, &tt);
-			char fileName[256];
-			sprintf_s(fileName, "[SocketErrorLog]%04d%02d%02d_%02d%02d%02d.txt", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
-
-			#pragma warning(disable:6387)
-			FILE* fp;
-			fopen_s(&fp, fileName, "w");
-			fwprintf(fp, L"send() error. [OtherClientInfo -> AcceptClient] errorcode=%d, FILE:%s, LINE:%d, AcceptacceptClientAddr:%s:%hu, \n", errorCodeSend, __FILEW__, __LINE__, acceptClientSession->ip, acceptClientSession->port);
-			fwprintf(fp, L"MsgData -> type = CreateStar(%d)\n", msgCreateStar.type);
-			fwprintf(fp, L"MsgData -> id = %d\n", msgCreateStar.id);
-			fwprintf(fp, L"MsgData -> col = %d\n", msgCreateStar.col);
-			fwprintf(fp, L"MsgData -> row = %d\n", msgCreateStar.row);
-			fclose(fp);
-			#pragma warning(default:6387)
-
-			// 지연삭제 마킹 및 연결끊기. SO_LINGER {0, 0} RST 전송
-			acceptClientSession->del = true;
-			closesocket(acceptClientSocket);
-			return;
-		}
-	}
-
-	// 다른 클라들에게 지금 접속한 클라 별 정보 주기
-	for (auto it = sessionList.begin(); it != sessionList.end(); ++it)
-	{
-		if ((*it)->id != acceptClientSession->id)
-		{
-			MsgCreateStar msgCreateStar;
-			msgCreateStar.type = (int)MsgType::CREATESTAR;
-			msgCreateStar.row = acceptClientSession->row;
-			msgCreateStar.col = acceptClientSession->col;
-			msgCreateStar.id = acceptClientSession->id;
-
-			returnValueSend = send((*it)->sock, (char*)&msgCreateStar, sizeof(msgCreateStar), 0);
-			if (returnValueSend == SOCKET_ERROR)
-			{
-				// 중요한 접속 과정중에 send() 오류가 났다. 이는 오류 타입을 구분하지 않고 연결을 끊어야한다. 링버퍼가 있다면 다음 프레임에 보낼 수 있다.
-				// 파일로 로그남기고 연결 끊기.
-				errorCodeSend = WSAGetLastError();
-
-				tm t;
-				time_t tt = time(NULL);
-				localtime_s(&t, &tt);
-				char fileName[256];
-				sprintf_s(fileName, "[SocketErrorLog]%04d%02d%02d_%02d%02d%02d.txt", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
-
-				#pragma warning(disable:6387) // fp가 NULL일 수 있다. (파일 생성이 안되면 뭐 어쩌겠나? 죽어야지)
-				FILE* fp;
-				fopen_s(&fp, fileName, "w");
-				fwprintf(fp, L"send() error. [AcceptClientInfo -> OtherClient] errorcode=%d, FILE:%s, LINE:%d, acceptClientAddr:%s:%hu, \n", errorCodeSend, __FILEW__, __LINE__, acceptClientSession->ip, acceptClientSession->port);
-				fwprintf(fp, L"MsgData -> type = CreateStar(%d)\n", msgCreateStar.type);
-				fwprintf(fp, L"MsgData -> id = %d\n", msgCreateStar.id);
-				fwprintf(fp, L"MsgData -> col = %d\n", msgCreateStar.col);
-				fwprintf(fp, L"MsgData -> row = %d\n", msgCreateStar.row);
-				fclose(fp);
-				#pragma warning(default:6387)
-
-				// 지연삭제 마킹 및 연결끊기. SO_LINGER {0, 0} RST 전송
-				acceptClientSession->del = true;
-				closesocket(acceptClientSocket);
-				return;
-			}
-		}
+		session->del = true;
 	}
 }
 
-void Render()
+void SweepMarkedSession()
 {
-	if (renderSkip == false)
+	for (auto it = sessionList.begin(); it != sessionList.end();)
 	{
-		memset(screen, 32, sizeof(screen));
-		for (auto it = sessionList.begin(); it != sessionList.end(); ++it)
+		if ((*it)->del == true)
 		{
-			screen[(*it)->row][(*it)->col] = '*';
+			MsgDeleteStar msgDeleteStar;
+			msgDeleteStar.type = (int)MsgType::DELETESTAR;
+			msgDeleteStar.id = (*it)->id;
+
+			SendBroadCast(*it, (char*)&msgDeleteStar, sizeof(msgDeleteStar));
+			msgCountDeleteStar += sessionList.size() - 1;
+
+			closesocket((*it)->sock);
+			it = sessionList.erase(it);
 		}
-
-		MoveCursor(0, 0);
-		printf("Connect Client: %d / FPS: %d / Send: %d / Recv: %d\n", (int)(sessionList.size()), printfps, sendMsgCountThisFrame, recvMsgCountThisFrame);
-		printf("AllocId: %d, CreateStar: %d, DeleteStar: %d, MoveStar(Send): %d, MoveStar(Recv): %d\n", msgCountAllocId, msgCountCreateStar, msgCountDeleteStar, msgCountMoveStarSend, msgCountMoveStarRecv);
-		for (int i = 0; i < SCREEN_ROW; i++)
-		{
-			screen[i][SCREEN_COL] = '\0';
-			printf("%s\n", screen[i]);
-		}
-	}
-}
-
-void FPS()
-{
-	// 프레임 카운트
-	fps++;
-
-	// FPS 저장
-	clock_t elapsedFpsTick = clock() - startFpsTick;
-	if (elapsedFpsTick >= 1000)
-	{
-		printfps = fps;
-		fps = 0;
-		startFpsTick += 1000;
-	}
-
-	// 프레임 제어
-	clock_t elapsedFrameTick = clock() - startFrameTick;
-	startFrameTick += 20;
-
-	// 렌더스킵 (까먹지 않기 위해 만들었음)
-	if (elapsedFrameTick >= 40)
-		renderSkip = true;
-	else
-		renderSkip = false;
-
-	clock_t remainFrameTick = 20 - elapsedFrameTick;
-	if (remainFrameTick > 0)
-	{
-		Sleep(remainFrameTick);
+		else
+			++it;
 	}
 }
