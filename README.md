@@ -4,7 +4,7 @@
 * 직접만든 리스트 자료구조 사용(클라) -> [LinkedList](https://github.com/fkdla124/LinkedList) <br>
 * STL list도 사용(서버)
 
-![화면사진](./screen.png)
+![화면사진](./OnlineStar.png)
 
 <br>
 
