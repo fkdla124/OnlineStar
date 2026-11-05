@@ -160,8 +160,8 @@ int main()
 
 	SetConsoleTitle(L"OnlineStar Client");
 
-	//printf("접속할 서버 IP : ");
-	//wscanf_s(L"%s", serverIp, (unsigned int)(sizeof(serverIp) / sizeof(WCHAR)));
+	printf("접속할 서버 IP : ");
+	wscanf_s(L"%s", serverIp, (unsigned int)(sizeof(serverIp) / sizeof(WCHAR)));
 
 	// WSAStartup()
 	WSADATA wsa;
@@ -186,7 +186,7 @@ int main()
 	SOCKADDR_IN serverAddr = { 0, };
 	serverAddr.sin_family = AF_INET;
 	serverAddr.sin_port = htons(SERVER_PORT);
-	returnValueInetPton = InetPton(AF_INET, L"127.0.0.1", &serverAddr.sin_addr);
+	returnValueInetPton = InetPton(AF_INET, serverIp, &serverAddr.sin_addr);
 	if (returnValueInetPton != 1)
 	{
 		if (returnValueInetPton == 0)
