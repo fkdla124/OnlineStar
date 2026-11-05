@@ -172,6 +172,7 @@ void Network(SOCKET listenSocket)
 						// 만약 우리 클라와 서버가 사용하는 메시지 프로토콜로 이동메시지외에 메시지가 왔다면 이는 클라 조작이다.
 						// 그런 경우에는 그 세션을 추적해서 행동들을 로깅해야한다. 아예 GM이 감시하는 것도 방법이다.
 						(*it)->del = true;
+						offset += returnValueRecv;
 						break;
 				}
 			}
@@ -337,6 +338,15 @@ SOCKET StartServer(linger _linger, ULONG nonBlocking)
 		printf("setsockopt() LINGER{0, 0} setting error. %d\n", errorCodeSetSockOpt);
 		Sleep(INFINITE);
 	}
+
+	//DWORD tcpNodelay = true;
+	//returnValueSetSockOpt = setsockopt(listenSocket, IPPROTO_TCP, TCP_NODELAY, (char*)&tcpNodelay, sizeof(tcpNodelay));
+	//if (returnValueSetSockOpt == SOCKET_ERROR)
+	//{
+	//	errorCodeSetSockOpt = WSAGetLastError();
+	//	printf("setsockopt() TCP_NODELAY setting error. %d\n", errorCodeSetSockOpt);
+	//	Sleep(INFINITE);
+	//}
 
 	// serverAddr
 	SOCKADDR_IN serverAddr = { 0, };

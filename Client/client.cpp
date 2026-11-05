@@ -152,16 +152,22 @@ int errorCodeRecv = NOT_YET;
 // 논블로킹 SOCKET_ERROR -> WSAEWOULDBLOCK 체크
 int returnValueSend = NOT_YET;
 int errorCodeSend = NOT_YET;
+
+// getsockname() 성공(0), 실패(SOCKET_ERROR) 실패시 WSAGetLastError() 사용
+int returnValueGetSockName = NOT_YET;
+int errorCodeGetSockName = NOT_YET;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// title 
+DWORD processId = GetCurrentProcessId();
+WCHAR title[64];
 
 int main()
 {
 	timeBeginPeriod(1);
 
-	SetConsoleTitle(L"OnlineStar Client");
-
-	printf("접속할 서버 IP : ");
-	wscanf_s(L"%s", serverIp, (unsigned int)(sizeof(serverIp) / sizeof(WCHAR)));
+	//printf("접속할 서버 IP : ");
+	//wscanf_s(L"%s", serverIp, (unsigned int)(sizeof(serverIp) / sizeof(WCHAR)));
 
 	// WSAStartup()
 	WSADATA wsa;
@@ -186,7 +192,7 @@ int main()
 	SOCKADDR_IN serverAddr = { 0, };
 	serverAddr.sin_family = AF_INET;
 	serverAddr.sin_port = htons(SERVER_PORT);
-	returnValueInetPton = InetPton(AF_INET, serverIp, &serverAddr.sin_addr);
+	returnValueInetPton = InetPton(AF_INET, L"14.4.133.122", &serverAddr.sin_addr);
 	if (returnValueInetPton != 1)
 	{
 		if (returnValueInetPton == 0)
@@ -374,6 +380,19 @@ int main()
 								MsgAllocID* ptr = (MsgAllocID*)msg;
 								myStar->id = ptr->id;
 
+								SOCKADDR_IN clientAddr = { 0, };
+								int clientAddrLen = sizeof(clientAddr);
+								returnValueGetSockName = getsockname(sock, (sockaddr*)&clientAddr, &clientAddrLen);
+								if (returnValueGetSockName == SOCKET_ERROR)
+								{
+									errorCodeGetSockName = WSAGetLastError();
+									printf("getsockname() error. %d\n", errorCodeGetSockName);
+									Sleep(INFINITE);
+								}
+
+								wsprintf(title, L"OnlineStar Client [PID: %d, StarID: %d, ClientPort: %hu]", processId, myStar->id, ntohs(clientAddr.sin_port));
+								SetConsoleTitle(title);
+
 								offset += sizeof(MsgAllocID);
 								break;
 							}
@@ -491,6 +510,14 @@ int main()
 								offset += sizeof(MsgMoveStar);
 								break;
 							}
+							default:
+							{
+								// 이상하게 메시지를 받았다면 이번에 받은 내용은 통째로 버린다.
+								// 현재 프로젝트에서는 잘린 메시지를 처리할 방법이 없고.
+								// 이동메시지는 버리더라도 다음 이동이 올 가능성이 높아서 큰 문제는 드러나지 않을 것으로 보인다.
+								offset += returnValueRecv;
+								break;
+							}
 						}
 					}
 				}
@@ -552,7 +579,7 @@ int main()
 				}
 
 				MoveCursor(0, 0);
-				printf("Connect Client: %d / FPS: %d / Send: %3d / Recv: %3d\n",(int)(starList.size()), printfps, sendMsgCountThisFrame, recvMsgCountThisFrame);
+				printf("Connect Client: %d / FPS: %d / Send: %5d / Recv: %5d\n", (int)(starList.size()), printfps, sendMsgCountThisFrame, recvMsgCountThisFrame);
 				printf("AllocId(Recv): %d, CreateStar(Recv): %d, DeleteStar(Recv): %d, MoveStar(Send): %d, MoveStar(Recv): %d\n", msgCountAllocId, msgCountCreateStar, msgCountDeleteStar, msgCountMoveStarSend, msgCountMoveStarRecv);
 				for (int i = 0; i < SCREEN_ROW; i++)
 				{
