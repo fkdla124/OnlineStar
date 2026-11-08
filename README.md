@@ -6,7 +6,6 @@
 * 콘솔에서 멀티플레이로 별을 움직일 수 있음. <br>
 * 직접만든 리스트 자료구조 사용(클라) -> [LinkedList](https://github.com/fkdla124/LinkedList) <br>
 * STL list도 사용(서버)
-* 학원 수강실에서 12명정도 LAN 환경에서 동시접속 후 움직이는 테스트 통과.
 
 ![화면사진](./OnlineStar.png)
 
