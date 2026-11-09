@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <list>
+#include "RingBuffer.h"
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Network Data //
@@ -25,7 +26,8 @@ struct Session
 	WCHAR ip[16];	// IPv4
 	USHORT port;
 
-	char recvBuf[RECV_BUFSIZE];
+	RingBuffer sendRingBuf;	// 송신 링버퍼. 지금 인원제한이 60명이라 기본값 1024바이트로 충분.
+	RingBuffer recvRingBuf;	// 수신 링버퍼
 };
 
 std::list<Session*> sessionList; // STL list 사용해보기.

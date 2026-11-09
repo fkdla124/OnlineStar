@@ -4,9 +4,6 @@
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "winmm.lib")
 
-// todo
-// 서버 연속 두개키면 10048 bind error() 나옴. 이거 기록하셈 깃허브에
-
 
 // 이번엔 헤더로 나눠보기.
 #include "Console.h"
@@ -27,6 +24,8 @@ void StopServer(SOCKET listenSocket);
 
 void SendUniCast(Session* session, char* msg, int msglen);
 void SendBroadCast(Session* excludedSession, char* msg, int msglen);
+
+void FlushSendRingBuffer(Session* session);
 
 void SweepMarkedSession();
 
@@ -75,11 +74,20 @@ void Network(SOCKET listenSocket)
 	sendMsgCountThisFrame = 0;
 
 	fd_set rset;
+	fd_set wset;
 	FD_ZERO(&rset);
+	FD_ZERO(&wset);
 
 	FD_SET(listenSocket, &rset);
 	for (auto it = sessionList.begin(); it != sessionList.end(); ++it)
+	{
 		FD_SET((*it)->sock, &rset);
+		
+		if ((*it)->sendRingBuf.empty() == false)
+		{
+			FD_SET((*it)->sock, &wset);
+		}
+	}
 
 	timeval tv = { 0, 0 }; // 지금은 로직이 따로 없어서 NULL이 맞지만. 렌더링을 하고싶기때문에 {0, 0} 으로 간다.
 	returnValueSelect = select(0, &rset, NULL, NULL, &tv);
@@ -98,7 +106,8 @@ void Network(SOCKET listenSocket)
 	{
 		if (FD_ISSET((*it)->sock, &rset))
 		{
-			returnValueRecv = recv((*it)->sock, (*it)->recvBuf, RECV_BUFSIZE, 0);
+			char recvBuf[RECV_BUFSIZE];
+			returnValueRecv = recv((*it)->sock, recvBuf, RECV_BUFSIZE, 0);
 			if (returnValueRecv == SOCKET_ERROR)
 			{
 				errorCodeRecv = WSAGetLastError();
@@ -122,11 +131,32 @@ void Network(SOCKET listenSocket)
 				continue;
 			}
 
-			int offset = 0;
-			while (offset < returnValueRecv)
+			// 우선 로컬버퍼 -> 링버퍼 순으로 진행해보기
+			returnValuePush = (*it)->recvRingBuf.push(recvBuf, returnValueRecv);
+			if (returnValuePush != returnValueRecv)
 			{
-				int* msg = (int*)((*it)->recvBuf + offset);
-				switch ((MsgType)*msg)
+				printf("recvRingBuf.push() Error\n");
+				Sleep(INFINITE);
+			}
+			
+			// 정석적인 처리는
+			// 1. 메시지 헤더크기만큼 잘 왔는지 사이즈체크
+			// 2. 헤더가 왔다면 헤더에서 len 뽑아서 페이로드까지도 잘 왔는지 체크.
+			// 3. 헤더 + 페이로드 크기가 정상적이라면 처리.
+			// 4. 1.로 돌아가서 다음 메시지 처리.
+
+			while (1)
+			{
+				// 우리게임은 16바이트 메시지고정 + 헤더 개념이 따로 없음.
+				// 그래서 16바이트냐만 체크하기.
+				// 만약 잘려오면 다음프레임까지 남아있다가 합쳐질 예정.
+				if ((*it)->recvRingBuf.size() < 16)
+					break;
+
+				char msg[16];
+				(*it)->recvRingBuf.pop(msg, 16);
+
+				switch ((MsgType)(*(int*)msg))
 				{
 					case MsgType::MOVESTAR:
 					{
@@ -137,17 +167,11 @@ void Network(SOCKET listenSocket)
 
 						// 본인 이동이 아니면 무시
 						if (ptr->id != (*it)->id)
-						{
-							offset += sizeof(MsgMoveStar);
 							break;
-						}
 
 						// 이상한 좌표 요청은 이동 무시
 						if (ptr->row < 0 || ptr->row >= SCREEN_ROW || ptr->col < 0 || ptr->col >= SCREEN_COL)
-						{
-							offset += sizeof(MsgMoveStar);
 							break;
-						}
 
 						// 이동
 						(*it)->row = ptr->row;
@@ -164,7 +188,6 @@ void Network(SOCKET listenSocket)
 						sendMsgCountThisFrame += sessionList.size() - 1;
 						msgCountMoveStarSend += sessionList.size() - 1;
 
-						offset += sizeof(MsgMoveStar);
 						break;
 					}
 					default:
@@ -172,10 +195,14 @@ void Network(SOCKET listenSocket)
 						// 만약 우리 클라와 서버가 사용하는 메시지 프로토콜로 이동메시지외에 메시지가 왔다면 이는 클라 조작이다.
 						// 그런 경우에는 그 세션을 추적해서 행동들을 로깅해야한다. 아예 GM이 감시하는 것도 방법이다.
 						(*it)->del = true;
-						offset += returnValueRecv;
 						break;
 				}
 			}
+		}
+		
+		if (FD_ISSET((*it)->sock, &wset))
+		{
+			FlushSendRingBuffer(*it);
 		}
 	}
 
@@ -409,7 +436,53 @@ void SendBroadCast(Session* excludedSession, char* msg, int msglen)
 
 void SendUniCast(Session* session, char* msg, int msglen)
 {
-	returnValueSend = send(session->sock, msg, msglen, 0);
+	returnValuePush = session->sendRingBuf.push(msg, msglen);
+	if (returnValuePush != msglen)
+	{
+		// 송신링버퍼가 꽉찼음.	
+		// 파일로 로그 남기고 연결 끊기.
+		tm t;
+		time_t tt = time(NULL);
+		localtime_s(&t, &tt);
+		char fileName[256];
+		sprintf_s(fileName, "[SendRIngBuffer Full Error]%04d%02d%02d_%02d%02d%02d.txt", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
+
+#pragma warning(disable:6387) // fp가 NULL일 수 있다.
+		FILE* fp;
+		fopen_s(&fp, fileName, "wb");
+
+		// UTF-16 LE BOM
+		unsigned char bom[] = { 0xFF, 0xFE };
+		fwrite(bom, 1, 2, fp);
+
+		fwprintf(fp, L"RingBuffer Full error. FILE: %s, LINE: %d, recvSessionID: %d \n", __FILEW__, __LINE__, session->id);
+		fwprintf(fp, L"RingBuffer Capacity: %d\n", session->sendRingBuf.capacity());
+		fwprintf(fp, L"RingBuffer Size: %d\n", session->sendRingBuf.size());
+		fwprintf(fp, L"Push MsgLen: %d\n", msglen);
+		fwprintf(fp, L"returnValuePush: %d\n", returnValuePush);
+		fwprintf(fp, L"MsgType = %d\n", *((int*)msg));
+		fclose(fp);
+#pragma warning(default:6387)
+
+		// 지연삭제 마킹 및 연결끊기. SO_LINGER {0, 0} RST 전송
+		session->del = true;
+	}
+}
+
+void FlushSendRingBuffer(Session* session)
+{
+	// 링버퍼 안정성 테스트용 임시버퍼. 
+	// 내 링버퍼가 문제없음이 확실시되면 삭제예정
+	char buf[1024];
+
+	returnValuePeek = session->sendRingBuf.peek(buf, 1024);
+	if (returnValuePeek != session->sendRingBuf.size())
+	{
+		printf("sendRingBuf.peek() Error\n");
+		Sleep(INFINITE);
+	}
+
+	returnValueSend = send(session->sock, buf, returnValuePeek, 0);
 	if (returnValueSend == SOCKET_ERROR)
 	{
 		errorCodeSend = WSAGetLastError();
@@ -421,7 +494,7 @@ void SendUniCast(Session* session, char* msg, int msglen)
 		char fileName[256];
 		sprintf_s(fileName, "[SocketErrorLog]%04d%02d%02d_%02d%02d%02d.txt", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
 
-		#pragma warning(disable:6387) // fp가 NULL일 수 있다.
+#pragma warning(disable:6387) // fp가 NULL일 수 있다.
 		FILE* fp;
 		fopen_s(&fp, fileName, "wb");
 
@@ -430,13 +503,14 @@ void SendUniCast(Session* session, char* msg, int msglen)
 		fwrite(bom, 1, 2, fp);
 
 		fwprintf(fp, L"send() error. errorcode: %d, FILE: %s, LINE: %d, recvSessionID: %d \n", errorCodeSend, __FILEW__, __LINE__, session->id);
-		fwprintf(fp, L"MsgType = %d\n", *((int*)msg));
 		fclose(fp);
-		#pragma warning(default:6387)
+#pragma warning(default:6387)
 
 		// 지연삭제 마킹 및 연결끊기. SO_LINGER {0, 0} RST 전송
 		session->del = true;
 	}
+
+	session->sendRingBuf.MoveFront(returnValueSend);
 }
 
 void SweepMarkedSession()
