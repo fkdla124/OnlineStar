@@ -31,6 +31,8 @@ void SweepMarkedSession();
 
 int main()
 {
+	timeBeginPeriod(1);
+
 	// Start Server
 	linger _linger = { 1, 0 };
 	ULONG nonBlocking = 1;
