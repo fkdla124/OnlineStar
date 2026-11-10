@@ -6,6 +6,7 @@
 
 #include "Console.h"
 #include "List.h"
+#include "RingBuffer.h"
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -91,9 +92,9 @@ WCHAR serverIp[16];
 #define SERVER_PORT 3000
 
 // 수신버퍼 
-// [한 프레임에 16바이트 메시지 * 10개 수용가능]
-#define RECV_BUFSIZE 1600
-char recvBuf[RECV_BUFSIZE];
+// [한 프레임에 16바이트 메시지 * 100개 수용가능]
+#define RECV_BUFSIZE 4096
+RingBuffer recvRingBuffer{RECV_BUFSIZE};
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -156,6 +157,15 @@ int errorCodeSend = NOT_YET;
 // getsockname() 성공(0), 실패(SOCKET_ERROR) 실패시 WSAGetLastError() 사용
 int returnValueGetSockName = NOT_YET;
 int errorCodeGetSockName = NOT_YET;
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// My RingBuffer ErrorCheck //
+
+int returnValuePush = NOT_YET;
+int returnValuePop = NOT_YET;
+int returnValuePeek = NOT_YET;
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // title 
@@ -344,6 +354,7 @@ int main()
 				if (FD_ISSET(sock, &rset))
 				{
 					// recv()
+					char recvBuf[RECV_BUFSIZE];
 					returnValueRecv = recv(sock, recvBuf, RECV_BUFSIZE, 0);
 					if (returnValueRecv == SOCKET_ERROR)
 					{
@@ -365,13 +376,27 @@ int main()
 					}
 					
 					recvMsgCountThisFrame = returnValueRecv / 16;
-
-					int offset = 0;
-					while (offset < returnValueRecv)
+					returnValuePush = recvRingBuffer.push(recvBuf, returnValueRecv);
+					if (returnValuePush != returnValueRecv)
 					{
-						int* msg = (int*)(recvBuf + offset);
+						printf("recvRingBuffer.push() Error\n");
+						Sleep(INFINITE);
+					}
 
-						switch ((MsgType)*msg)
+					while (1)
+					{
+						if (recvRingBuffer.size() < 16)
+							break;
+
+						char msg[16];
+						returnValuePop = recvRingBuffer.pop(msg, 16);
+						if (returnValuePop != 16)
+						{
+							printf("recvRingBuffer.pop() Error\n");
+							Sleep(INFINITE);
+						}
+
+						switch ((MsgType)*((int*)msg))
 						{
 							case MsgType::ALLOCID:
 							{
@@ -393,7 +418,6 @@ int main()
 								wsprintf(title, L"OnlineStar Client [PID: %d, StarID: %d, ClientPort: %hu]", processId, myStar->id, ntohs(clientAddr.sin_port));
 								SetConsoleTitle(title);
 
-								offset += sizeof(MsgAllocID);
 								break;
 							}
 							case MsgType::CREATESTAR:
@@ -441,7 +465,6 @@ int main()
 									starList.push_back(star);
 								}
 
-								offset += sizeof(MsgCreateStar);
 								break;
 							}
 							case MsgType::DELETESTAR:
@@ -452,10 +475,7 @@ int main()
 
 								// 만약 내 별을 지워라? 연결을 끊을 것도 아니고 뜬금없이 지우라는 건 이상하다. 무시한다.
 								if (ptr->id == myStar->id)
-								{
-									offset += sizeof(MsgDeleteStar);
 									break;
-								}
 
 								// 별 찾아서 지우기
 								for (List<Star*>::Iterator it = starList.begin(); it != starList.end(); ++it)
@@ -467,7 +487,6 @@ int main()
 									}
 								}
 
-								offset += sizeof(MsgDeleteStar);
 								break;
 							}
 							case MsgType::MOVESTAR:
@@ -478,10 +497,7 @@ int main()
 
 								// 내 이동정보는 버림.
 								if (ptr->id == myStar->id)
-								{
-									offset += sizeof(MsgMoveStar);
 									break;
-								}
 
 
 								// 이동보정 해야할까 고민이다. 서버쪽에서 주는 좌표정보가 이상할까?
@@ -507,7 +523,6 @@ int main()
 									}
 								}
 
-								offset += sizeof(MsgMoveStar);
 								break;
 							}
 							default:
@@ -515,7 +530,6 @@ int main()
 								// 이상하게 메시지를 받았다면 이번에 받은 내용은 통째로 버린다.
 								// 현재 프로젝트에서는 잘린 메시지를 처리할 방법이 없고.
 								// 이동메시지는 버리더라도 다음 이동이 올 가능성이 높아서 큰 문제는 드러나지 않을 것으로 보인다.
-								offset += returnValueRecv;
 								break;
 							}
 						}
