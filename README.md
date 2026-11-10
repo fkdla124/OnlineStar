@@ -4,8 +4,7 @@
 # ⭐ OnlineStar
 * socket API, tcp, Msg Protocol 에 대해 학습하기 위하여 진행하는 미니프로젝트. <br>
 * 콘솔에서 멀티플레이로 별을 움직일 수 있음. <br>
-* 직접만든 리스트 자료구조 사용(클라) -> [LinkedList](https://github.com/fkdla124/LinkedList) <br>
-* STL list도 사용(서버)
+* 직접만든 자료구조 사용 -> [LinkedList](https://github.com/fkdla124/LinkedList) [RingBuffer](https://github.com/fkdla124/RingBuffer) <br>
 
 ![화면사진](./OnlineStar.png)
 
@@ -36,11 +35,9 @@
 
 # 📐 학습을 위한 단순화 규칙
 * 모든 메시지는 16바이트로 통일.
-* 메시지는 잘려오지 않는다고 가정. 뭉쳐오는 것은 가능.
-* L7 링버퍼를 만들지 않음. 이번 프레임에 보내지 못한 메시지는 고려하지 않음.
 * select() 모델 학습을 위해 굳이 필요없음에도 일단 사용.
 * 서버에서는 이동처리시 클라이언트에게 정확한 목적지를 받아서 모든 클라이언트가 같은자리에 서게끔 만들어야하지만,
-   이부분을 고려하지않음.
+   이부분을 고려하지않고 매 프레임 이동메시지 송신.
 
 <br>
 <br>
